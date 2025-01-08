@@ -1,0 +1,5 @@
+# Ignore .nii files
+*.nii
+
+# Ignore .nii.gz files
+*.nii.gz
