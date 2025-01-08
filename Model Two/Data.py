@@ -1,51 +1,45 @@
 import os
-import requests
+import boto3
+from botocore import UNSIGNED
+from botocore.client import Config
 from tqdm import tqdm
-from bs4 import BeautifulSoup
 
-# Define the download URLs for the ABIDE dataset
-CPAC_PIPELINE_URL = "http://fcon_1000.projects.nitrc.org/indi/abide/ABIDE_Release_1.0/Outputs/cpac/filt_global/"  # C-PAC pipeline
-PHENOTYPIC_DATA_URL = "http://fcon_1000.projects.nitrc.org/indi/abide/ABIDE_Release_1.0/Phenotypic_V1_0b.csv"  # Phenotypic data
+# Define the S3 bucket and prefix for the ABIDE dataset
+S3_BUCKET = "fcp-indi"
+S3_PREFIX = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/"
 
 # Define the local directory to save the data
 SAVE_DIR = "./abide_data"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-def download_file(url, save_path):
+def download_s3_directory(bucket_name, prefix, local_dir):
     """
-    Downloads a file from a given URL and saves it to the specified path.
+    Downloads all files from an S3 directory to a local directory.
     """
-    response = requests.get(url, stream=True)
-    total_size = int(response.headers.get("content-length", 0))
-    block_size = 1024  # 1 KB
+    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))  # Use unsigned requests
+    paginator = s3.get_paginator("list_objects_v2")
+    pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-    with open(save_path, "wb") as file, tqdm(
-        desc=save_path,
-        total=total_size,
-        unit="iB",
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as progress_bar:
-        for data in response.iter_content(block_size):
-            progress_bar.update(len(data))
-            file.write(data)
+    # Get the list of files to download
+    files_to_download = []
+    for page in pages:
+        if "Contents" in page:
+            for obj in page["Contents"]:
+                files_to_download.append(obj["Key"])
 
-def get_file_list(url):
-    """
-    Fetches the list of files available in a directory using HTTP.
-    """
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(f"Failed to fetch file list from {url}")
+    if not files_to_download:
+        print(f"No files found in S3 bucket: {bucket_name}/{prefix}")
+        return
 
-    # Parse the HTML content to extract file names
-    soup = BeautifulSoup(response.text, "html.parser")
-    file_links = [a["href"] for a in soup.find_all("a") if a["href"].endswith(".1D")]  # Filter for .1D files
-    return file_links
+    # Download each file
+    for file_key in tqdm(files_to_download, desc="Downloading files"):
+        local_file_path = os.path.join(local_dir, os.path.relpath(file_key, prefix))
+        os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+        s3.download_file(bucket_name, file_key, local_file_path)
 
 def download_abide_data():
     """
-    Downloads the ABIDE dataset (C-PAC pipeline) and phenotypic data.
+    Downloads the ABIDE dataset (phenotypic and functional data).
     """
     print("Downloading ABIDE dataset...")
 
@@ -53,7 +47,12 @@ def download_abide_data():
     phenotypic_save_path = os.path.join(SAVE_DIR, "Phenotypic_V1_0b.csv")
     if not os.path.exists(phenotypic_save_path):
         print(f"Downloading phenotypic data to {phenotypic_save_path}...")
-        download_file(PHENOTYPIC_DATA_URL, phenotypic_save_path)
+        s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+        s3.download_file(
+            S3_BUCKET,
+            "data/Projects/ABIDE_Initiative/Phenotypic_V1_0b.csv",
+            phenotypic_save_path,
+        )
     else:
         print(f"Phenotypic data already exists at {phenotypic_save_path}.")
 
@@ -61,20 +60,8 @@ def download_abide_data():
     functional_save_dir = os.path.join(SAVE_DIR, "functionals", "cpac", "filt_global", "rois_cc200")
     os.makedirs(functional_save_dir, exist_ok=True)
 
-    # Fetch the list of files to download
-    print("Fetching list of functional data files...")
-    file_list = get_file_list(CPAC_PIPELINE_URL)
-    print(f"Found {len(file_list)} files to download.")
-
-    # Download all files
-    for file_name in file_list:
-        file_url = CPAC_PIPELINE_URL + file_name
-        file_save_path = os.path.join(functional_save_dir, file_name)
-        if not os.path.exists(file_save_path):
-            print(f"Downloading {file_name} to {file_save_path}...")
-            download_file(file_url, file_save_path)
-        else:
-            print(f"{file_name} already exists at {file_save_path}.")
+    print(f"Downloading functional data to {functional_save_dir}...")
+    download_s3_directory(S3_BUCKET, S3_PREFIX, functional_save_dir)
 
     print("Download complete!")
 
