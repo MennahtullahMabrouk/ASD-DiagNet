@@ -15,6 +15,7 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 def download_s3_directory(bucket_name, prefix, local_dir):
     """
     Downloads all files from an S3 directory to a local directory.
+    Skips files that already exist locally.
     """
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))  # Use unsigned requests
     paginator = s3.get_paginator("list_objects_v2")
@@ -31,15 +32,23 @@ def download_s3_directory(bucket_name, prefix, local_dir):
         print(f"No files found in S3 bucket: {bucket_name}/{prefix}")
         return
 
-    # Download each file
+    # Download each file (skip if already exists)
     for file_key in tqdm(files_to_download, desc="Downloading files"):
         local_file_path = os.path.join(local_dir, os.path.relpath(file_key, prefix))
         os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+
+        # Skip download if the file already exists
+        if os.path.exists(local_file_path):
+            print(f"File already exists: {local_file_path}. Skipping download.")
+            continue
+
+        # Download the file
         s3.download_file(bucket_name, file_key, local_file_path)
 
 def download_abide_data():
     """
     Downloads the ABIDE dataset (phenotypic and functional data).
+    Skips download if files already exist locally.
     """
     print("Downloading ABIDE dataset...")
 

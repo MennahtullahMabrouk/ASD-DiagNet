@@ -1,4 +1,3 @@
-# download_data.py
 import numpy as np
 from nilearn import datasets, input_data
 import os
