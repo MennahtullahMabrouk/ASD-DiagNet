@@ -1,10 +1,12 @@
 # Import libraries
 import pandas as pd
 import numpy as np
+import numpy.ma as ma
 import os
 import pickle
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import StratifiedKFold
@@ -79,6 +81,20 @@ def get_regs(samples_names, reg_num):
     lows = avg.argsort()[:reg_num][::-1]
     regions = np.concatenate((highs, lows), axis=0)
     return regions
+
+def norm_weights(samples_list):
+    # Example: Return equal weights for all samples
+    return np.ones(len(samples_list)) / len(samples_list)
+
+def cal_similarity(eigvecs1, eigvecs2, weights, lim=2):
+    # Example: Calculate cosine similarity between eigenvectors
+    similarity = np.dot(eigvecs1[:lim], eigvecs2[:lim].T)
+    return np.sum(similarity * weights)
+
+def get_loader(data, samples_list, batch_size, mode='train', augmentation=False, aug_factor=1, num_neighbs=5, eig_data=None, similarity_fn=None, regions=None):
+    dataset = CC200Dataset(data, samples_list, augmentation=augmentation, aug_factor=aug_factor, num_neighbs=num_neighbs, eig_data=eig_data, similarity_fn=similarity_fn, regions=regions)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=(mode == 'train'))
+    return loader
 
 # Load data
 data_main_path = '/home/taban/autism/paper_autism/acerta-abide/acerta-abide/data/functionals/cpac/filt_global/rois_' + p_ROI
