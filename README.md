@@ -15,7 +15,8 @@ http://preprocessed-connectomes-project.org/abide/
 
 ##### Models
 - We have two models both work on detection of Autism Spectrum Disorder (ASD) 
-- First Model works on: 
+- First Model: 
+  - First code version: https://colab.research.google.com/drive/1GzYgNlzY-tNdp340oJ4Fr4eSXtFK4FAS?usp=sharing
   - Pipeline: C-PAC 
   - Data Type: Preprocessed fMRI time-series (func_preproc)
   - Features: Functional connectivity matrices (correlation matrices)
@@ -25,4 +26,6 @@ http://preprocessed-connectomes-project.org/abide/
   - Number of Subjects: 100 (by default, but you can change this)
   - Input: nii or nii.gz
   - If you have image only convert DICOM files to NIfTI format
-- 
+- Second Model:
+  - Credentials: https://github.com/pcdslab/ASD-DiagNet/blob/master/ASD-DiagNet.ipynb
+  - 
