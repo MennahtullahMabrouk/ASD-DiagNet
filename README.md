@@ -2,11 +2,16 @@
 https://www.frontiersin.org/journals/neuroinformatics/articles/10.3389/fninf.2019.00070/full
 
 ##### Dependencies
+```
 Python 3.9 
-Numpy ==
-Nilearn == 
-Tensorflow ==
-Scikit-Learn ==
+Numpy == 2.0.2
+Nilearn == 0.11.1
+Tensorflow == 2.18.0
+Scikit-Learn == 1.6.0
+```
+
+##### Dataset
+http://preprocessed-connectomes-project.org/abide/
 
 ##### Models
 - We have two models both work on detection of Autism Spectrum Disorder (ASD) 
