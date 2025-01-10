@@ -120,8 +120,8 @@ def get_loader(data, samples_list, batch_size, mode='train', augmentation=False,
 
 # Define paths
 base_dir = os.path.dirname(os.path.abspath(__file__))
-data_main_path = os.path.join(base_dir, 'abide_data/cpac/nofilt_noglobal/rois_' + p_ROI)
-phenotypic_csv_path = os.path.join(base_dir, 'abide_data/Phenotypic_V1_0b.csv')
+data_main_path = os.path.join(base_dir, 'data/ABIDE/Outputs/cpac/filt_noglobal/rois_' + p_ROI)
+phenotypic_csv_path = os.path.join(base_dir, 'data/Phenotypic_V1_0b.csv')
 correlations_file_path = os.path.join(base_dir, 'correlations_file_' + p_ROI + '.pkl')
 
 # Validate paths
