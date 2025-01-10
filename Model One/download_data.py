@@ -1,42 +1,32 @@
-import numpy as np
-from nilearn import datasets, input_data
 import os
+import logging
+from nilearn import datasets
 
-# Load and preprocess ABIDE dataset
-def load_abide_dataset():
-    # Define the data directory
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def download_abide_dataset():
+    """
+    Downloads the ABIDE dataset if it doesn't already exist.
+    Returns the path to the downloaded dataset directory.
+    """
     data_dir = './abide'
-
-    # Check if the dataset already exists
+    logging.info(f"Checking if dataset directory exists: {data_dir}")
     if not os.path.exists(data_dir):
-        print("Downloading ABIDE dataset...")
-        os.makedirs(data_dir, exist_ok=True)
+        logging.info(f"Directory not found. Creating directory: {data_dir}")
+        os.makedirs(data_dir)
+        logging.info("Downloading ABIDE dataset...")
+        # Download the dataset
+        datasets.fetch_abide_pcp(data_dir=data_dir, pipeline='cpac', derivatives=['func_preproc'], n_subjects=100)
+        logging.info("Dataset download complete.")
     else:
-        print("ABIDE dataset already exists. Skipping download...")
+        logging.info("Dataset directory already exists. Skipping download.")
 
-    # Load ABIDE dataset (full dataset)
-    abide = datasets.fetch_abide_pcp(data_dir=data_dir, pipeline='cpac', derivatives=['func_preproc'])
+    return data_dir
 
-    # Extract functional connectivity features using Nilearn
-    masker = input_data.NiftiMasker(standardize=True)
-    X = []
-    y = []
-
-    for func_file, phenotypic in zip(abide.func_preproc, abide.phenotypic):
-        try:
-            time_series = masker.fit_transform(func_file)  # Extract time-series data
-            correlation_matrix = np.corrcoef(time_series.T)  # Functional connectivity
-            X.append(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)])  # Upper triangle as features
-            y.append(phenotypic['DX_GROUP'])  # Diagnosis label
-        except:
-            continue
-
-    X = np.array(X)
-    y = np.array(y) - 1  # Convert labels to 0 and 1 (e.g., ASD vs Control)
-    return X, y
 
 if __name__ == "__main__":
-    # Save the dataset to a file
-    X, y = load_abide_dataset()
-    np.savez('abide_dataset.npz', X=X, y=y)
-    print("Dataset saved to 'abide_dataset.npz'.")
+    logging.info("Starting dataset download script...")
+    download_abide_dataset()
+    logging.info("Dataset download script execution complete.")

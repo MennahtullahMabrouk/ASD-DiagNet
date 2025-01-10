@@ -11,14 +11,17 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import confusion_matrix
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
 import functools
-import time
 import random
+import gc  # For garbage collection
+import logging  # For logging messages
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 # Set parameters
-p_ROI = "cc200"  # Options: cc200, dosenbach160, aal
+p_ROI = "aal"  # Options: aal, cc200, dosenbach160
 p_fold = 10
 p_center = "Stanford"
 p_mode = "whole"
@@ -26,44 +29,59 @@ p_augmentation = True
 p_Method = "ASD-DiagNet"
 
 # Print parameters
-print("*****List of parameters****")
-print("ROI atlas: ", p_ROI)
-print("Per Center or Whole: ", p_mode)
+logger.info("*****List of parameters****")
+logger.info(f"ROI atlas: {p_ROI}")
+logger.info(f"Per Center or Whole: {p_mode}")
 if p_mode == 'percenter':
-    print("Center's name: ", p_center)
-print("Method's name: ", p_Method)
+    logger.info(f"Center's name: {p_center}")
+logger.info(f"Method's name: {p_Method}")
 if p_Method == "ASD-DiagNet":
-    print("Augmentation: ", p_augmentation)
+    logger.info(f"Augmentation: {p_augmentation}")
 
 # Helper functions
 def get_key(filename):
-    f_split = filename.split('_')
-    if f_split[3] == 'rois':
-        key = '_'.join(f_split[0:3])
-    else:
-        key = '_'.join(f_split[0:2])
-    return key
+    return filename.replace('_rois_aal.1D', '')
 
-def get_label(filename):
-    assert filename in labels
+def get_label(filename, labels):
+    assert filename in labels, f"Filename {filename} not found in labels."
     return labels[filename]
 
-def get_corr_data(filename):
-    for file in os.listdir(data_main_path):
-        if file.startswith(filename):
-            df = pd.read_csv(os.path.join(data_main_path, file), sep='\t')
+def get_corr_data(filepath):
+    logger.info(f"Processing file: {filepath}")
+    # Load the .1D file
+    data = np.loadtxt(filepath)
+    if data.ndim == 1:  # If the data is 1D, reshape it to (timepoints, 1)
+        data = data.reshape(-1, 1)
+    elif data.ndim == 2:  # If the data is 2D, ensure it's (timepoints, regions)
+        if data.shape[0] < 2:  # Check if there are at least 2 timepoints
+            logger.warning(f"Skipping {filepath}: Not enough timepoints for correlation matrix calculation.")
+            return None
+    else:
+        raise ValueError(f"Unexpected data shape: {data.shape}")
+
+    # Compute the correlation matrix
     with np.errstate(invalid="ignore"):
-        corr = np.nan_to_num(np.corrcoef(df.T))
+        corr = np.nan_to_num(np.corrcoef(data.T))
         mask = np.invert(np.tri(corr.shape[0], k=-1, dtype=bool))
         m = ma.masked_where(mask == 1, mask)
         return ma.masked_where(m, corr).compressed()
 
-def get_corr_matrix(filename):
-    for file in os.listdir(data_main_path):
-        if file.startswith(filename):
-            df = pd.read_csv(os.path.join(data_main_path, file), sep='\t')
+def get_corr_matrix(filepath):
+    logger.info(f"Processing file: {filepath}")
+    # Load the .1D file
+    data = np.loadtxt(filepath)
+    if data.ndim == 1:  # If the data is 1D, reshape it to (timepoints, 1)
+        data = data.reshape(-1, 1)
+    elif data.ndim == 2:  # If the data is 2D, ensure it's (timepoints, regions)
+        if data.shape[0] < 2:  # Check if there are at least 2 timepoints
+            logger.warning(f"Skipping {filepath}: Not enough timepoints for correlation matrix calculation.")
+            return None
+    else:
+        raise ValueError(f"Unexpected data shape: {data.shape}")
+
+    # Compute the correlation matrix
     with np.errstate(invalid="ignore"):
-        corr = np.nan_to_num(np.corrcoef(df.T))
+        corr = np.nan_to_num(np.corrcoef(data.T))
         return corr
 
 def confusion(g_truth, predictions):
@@ -74,6 +92,7 @@ def confusion(g_truth, predictions):
     return accuracy, sensitivity, specificity
 
 def get_regs(samples_names, reg_num):
+    logger.info(f"Selecting regions for {len(samples_names)} samples")
     datas = [all_corr[sn][0] for sn in samples_names]
     datas = np.array(datas)
     avg = np.mean(datas, axis=0)
@@ -83,50 +102,100 @@ def get_regs(samples_names, reg_num):
     return regions
 
 def norm_weights(samples_list):
-    # Example: Return equal weights for all samples
-    return np.ones(len(samples_list)) / len(samples_list)
+    return np.ones(len(samples_list))  # Return weights as a 1D array of ones
 
 def cal_similarity(eigvecs1, eigvecs2, weights, lim=2):
-    # Example: Calculate cosine similarity between eigenvectors
+    eigvecs1 = np.array(eigvecs1)  # Convert to NumPy array
+    eigvecs2 = np.array(eigvecs2)  # Convert to NumPy array
     similarity = np.dot(eigvecs1[:lim], eigvecs2[:lim].T)
-    return np.sum(similarity * weights)
+    # Use weights as a scalar (e.g., average weight)
+    weights = np.mean(weights)  # Use the average weight
+    return np.sum(similarity) * weights
 
 def get_loader(data, samples_list, batch_size, mode='train', augmentation=False, aug_factor=1, num_neighbs=5, eig_data=None, similarity_fn=None, regions=None):
+    logger.info(f"Creating DataLoader for {mode} mode with {len(samples_list)} samples")
     dataset = CC200Dataset(data, samples_list, augmentation=augmentation, aug_factor=aug_factor, num_neighbs=num_neighbs, eig_data=eig_data, similarity_fn=similarity_fn, regions=regions)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=(mode == 'train'))
     return loader
 
-# Load data
-data_main_path = '/home/taban/autism/paper_autism/acerta-abide/acerta-abide/data/functionals/cpac/filt_global/rois_' + p_ROI
-flist = os.listdir(data_main_path)
-flist = [get_key(f) for f in flist]
+# Define paths
+base_dir = os.path.dirname(os.path.abspath(__file__))
+data_main_path = os.path.join(base_dir, 'abide_data/cpac/nofilt_noglobal/rois_' + p_ROI)
+phenotypic_csv_path = os.path.join(base_dir, 'abide_data/Phenotypic_V1_0b.csv')
+correlations_file_path = os.path.join(base_dir, 'correlations_file_' + p_ROI + '.pkl')
 
-df_labels = pd.read_csv('/home/taban/autism/paper_autism/acerta-abide/acerta-abide/data/phenotypes/Phenotypic_V1_0b_preprocessed1.csv')
+# Validate paths
+if not os.path.exists(data_main_path):
+    raise FileNotFoundError(f"Data path does not exist: {data_main_path}")
+logger.info(f"Data path exists: {data_main_path}")
+logger.info(f"Files in directory: {os.listdir(data_main_path)}")
+
+# Generate flist with all .1D files
+flist = []
+for root, dirs, files in os.walk(data_main_path):
+    for file in files:
+        if file.endswith('.1D'):
+            key = get_key(file)
+            flist.append(key)
+logger.info(f"Filtered file list (flist): {flist}")
+
+# Ensure flist is not empty
+if not flist:
+    raise FileNotFoundError(f"No valid files found in {data_main_path}. Please check the directory or ROI parameter.")
+
+# Load phenotypic data
+logger.info("Loading phenotypic data")
+df_labels = pd.read_csv(phenotypic_csv_path)
 df_labels.DX_GROUP = df_labels.DX_GROUP.map({1: 1, 2: 0})
-
 labels = {row[1]['FILE_ID']: row[1]['DX_GROUP'] for row in df_labels.iterrows() if row[1]['FILE_ID'] != 'no_filename'}
 
-# Compute correlations
-if not os.path.exists('./correlations_file' + p_ROI + '.pkl'):
-    all_corr = {f: (get_corr_data(f), get_label(f)) for f in flist}
-    pickle.dump(all_corr, open('./correlations_file' + p_ROI + '.pkl', 'wb'))
-else:
-    all_corr = pickle.load(open('./correlations_file' + p_ROI + '.pkl', 'rb'))
-
-# Compute eigenvalues and eigenvectors (if using ASD-DiagNet)
-if p_Method == "ASD-DiagNet":
-    eig_data = {}
+# Load or compute correlations
+if not os.path.exists(correlations_file_path):
+    logger.info("Computing correlations from scratch")
+    all_corr = {}
     for f in flist:
-        d = get_corr_matrix(f)
-        eig_vals, eig_vecs = np.linalg.eig(d)
-        sum_eigvals = np.sum(np.abs(eig_vals))
-        eig_pairs = [(np.abs(eig_vals[i]), eig_vecs[:, i], np.abs(eig_vals[i]) / sum_eigvals) for i in range(len(eig_vals))]
-        eig_pairs.sort(key=lambda x: x[0], reverse=True)
-        eig_data[f] = {'eigvals': np.array([ep[0] for ep in eig_pairs]),
-                       'norm-eigvals': np.array([ep[2] for ep in eig_pairs]),
-                       'eigvecs': [ep[1] for ep in eig_pairs]}
+        filepath = os.path.join(data_main_path, f + '_rois_aal.1D')
+        corr_data = get_corr_data(filepath)
+        if corr_data is not None:  # Skip invalid data
+            all_corr[f] = (corr_data, get_label(f, labels))
+    with open(correlations_file_path, 'wb') as f:
+        pickle.dump(all_corr, f)
+else:
+    logger.info("Loading precomputed correlations")
+    with open(correlations_file_path, 'rb') as f:
+        all_corr = pickle.load(f)
 
-# Dataset class
+# Free up memory
+del df_labels
+gc.collect()
+
+if p_Method == "ASD-DiagNet":
+    logger.info("Starting ASD-DiagNet method")
+    eig_data = {}
+    batch_size = 10  # Process 10 files at a time
+    for i in range(0, len(flist), batch_size):
+        batch_files = flist[i:i + batch_size]
+        logger.info(f"Processing batch {i // batch_size + 1} of {len(flist) // batch_size + 1}")
+        for f in batch_files:
+            filepath = os.path.join(data_main_path, f + '_rois_aal.1D')
+            d = get_corr_matrix(filepath)
+            if d is not None and d.ndim == 2:  # Ensure the correlation matrix is 2D
+                try:
+                    eig_vals, eig_vecs = np.linalg.eig(d)
+                    sum_eigvals = np.sum(np.abs(eig_vals))
+                    eig_pairs = [(np.abs(eig_vals[i]), eig_vecs[:, i], np.abs(eig_vals[i]) / sum_eigvals) for i in range(len(eig_vals))]
+                    eig_pairs.sort(key=lambda x: x[0], reverse=True)
+                    eig_data[f] = {'eigvals': np.array([ep[0] for ep in eig_pairs]),
+                                   'norm-eigvals': np.array([ep[2] for ep in eig_pairs]),
+                                   'eigvecs': [ep[1] for ep in eig_pairs]}
+                except np.linalg.LinAlgError as e:
+                    logger.error(f"Skipping {f}: Error in eigenvalue decomposition - {e}")
+            else:
+                logger.warning(f"Skipping {f}: Invalid correlation matrix shape - {d.shape if d is not None else 'None'}")
+        # Free up memory after each batch
+        del batch_files
+        gc.collect()
+
 class CC200Dataset(Dataset):
     def __init__(self, data, samples_list, augmentation=False, aug_factor=1, num_neighbs=5, eig_data=None, similarity_fn=None, regions=None):
         self.data = data
@@ -136,6 +205,7 @@ class CC200Dataset(Dataset):
         self.num_data = aug_factor * len(self.flist) if augmentation else len(self.flist)
         self.neighbors = {}
         if augmentation:
+            logger.info(f"Applying data augmentation with factor {aug_factor}")
             weights = norm_weights(samples_list)
             for f in self.flist:
                 label = self.data[f][1]
@@ -164,7 +234,6 @@ class CC200Dataset(Dataset):
     def __len__(self):
         return self.num_data
 
-# Autoencoder model
 class MTAutoEncoder(nn.Module):
     def __init__(self, num_inputs, num_latent, tied=True, use_dropout=False):
         super(MTAutoEncoder, self).__init__()
@@ -184,11 +253,11 @@ class MTAutoEncoder(nn.Module):
         x_rec = F.linear(x, self.fc_encoder.weight.t()) if self.tied else self.fc_decoder(x)
         return x_rec, x_logit
 
-# Training and testing functions
-def train(model, epoch, train_loader, p_bernoulli=None, mode='both', lam_factor=1.0):
+def train(model, epoch, train_loader, mode='both', lam_factor=1.0):
     model.train()
-    train_losses = []
-    for batch_x, batch_y in train_loader:
+    train_losses = []  # Initialize as a list
+    logger.info(f"Starting training for epoch {epoch} in mode {mode}")
+    for batch_idx, (batch_x, batch_y) in enumerate(train_loader):
         data, target = batch_x.to(device), batch_y.to(device)
         optimizer.zero_grad()
         rec, logits = model(data, mode != 'ae')
@@ -197,26 +266,38 @@ def train(model, epoch, train_loader, p_bernoulli=None, mode='both', lam_factor=
         loss_total = loss_ae + lam_factor * loss_clf
         loss_total.backward()
         optimizer.step()
-        train_losses.append([loss_ae.item(), loss_clf.item()])
+        # Append losses as a list
+        train_losses.append([loss_ae.item() if mode in ['both', 'ae'] else 0,
+                             loss_clf.item() if mode in ['both', 'clf'] else 0])
+        if batch_idx % 10 == 0:  # Log every 10 batches
+            logger.info(f"Epoch {epoch}, Batch {batch_idx}: Loss AE = {loss_ae.item() if mode in ['both', 'ae'] else 0}, Loss CLF = {loss_clf.item() if mode in ['both', 'clf'] else 0}")
     return train_losses
 
-def test(model, criterion, test_loader, eval_classifier=False):
+def test(model, test_loader, eval_classifier=False):
     model.eval()
     y_true, y_pred = [], []
+    logger.info("Starting testing")
     with torch.no_grad():
         for batch_x, batch_y in test_loader:
             data = batch_x.to(device)
-            rec, logits = model(data, eval_classifier)
+            _, logits = model(data, eval_classifier)
             if eval_classifier:
                 proba = torch.sigmoid(logits).cpu().numpy()
                 preds = (proba >= 0.5).astype(int)
                 y_true.extend(batch_y.cpu().numpy())
                 y_pred.extend(preds)
-    return confusion(y_true, y_pred)
+    accuracy, sensitivity, specificity = confusion(y_true, y_pred)
+    logger.info(f"Test results: Accuracy = {accuracy}, Sensitivity = {sensitivity}, Specificity = {specificity}")
+    return accuracy, sensitivity, specificity
 
-# Main execution
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+# Set device
+if torch.backends.mps.is_available():
+    device = torch.device("mps")  # Use MPS backend on Apple Silicon
+elif torch.cuda.is_available():
+    device = torch.device("cuda")  # Use GPU if available
+else:
+    device = torch.device("cpu")  # Fallback to CPU
+logger.info(f"Using device: {device}")
 
 if p_Method == "ASD-DiagNet":
     num_corr = len(all_corr[flist[0]][0])
@@ -231,32 +312,40 @@ if p_Method == "ASD-DiagNet":
     sim_function = functools.partial(cal_similarity, lim=lim4sim)
     crossval_res_kol = []
 
-    for rp in range(10):
-        kf = StratifiedKFold(n_splits=p_fold, random_state=1, shuffle=True)
-        np.random.shuffle(flist)
-        y_arr = np.array([get_label(f) for f in flist])
-        for train_index, test_index in kf.split(flist, y_arr):
-            train_samples, test_samples = flist[train_index], flist[test_index]
-            regions_inds = get_regs(train_samples, int(num_corr / 4))
-            num_inpp = len(regions_inds)
-            n_lat = int(num_inpp / 2)
+    # Shuffle the data once before splitting into folds
+    np.random.shuffle(flist)
+    y_arr = np.array([get_label(f, labels) for f in flist])
 
-            train_loader = get_loader(data=all_corr, samples_list=train_samples, batch_size=batch_size, mode='train',
-                                      augmentation=p_augmentation, aug_factor=aug_factor, num_neighbs=num_neighbs,
-                                      eig_data=eig_data, similarity_fn=sim_function, regions=regions_inds)
-            test_loader = get_loader(data=all_corr, samples_list=test_samples, batch_size=batch_size, mode='test',
-                                     augmentation=False, regions=regions_inds)
+    # Initialize StratifiedKFold once
+    kf = StratifiedKFold(n_splits=p_fold, random_state=42, shuffle=True)
 
-            model = MTAutoEncoder(num_inputs=num_inpp, num_latent=n_lat, tied=True, use_dropout=False).to(device)
-            criterion_ae = nn.MSELoss(reduction='sum')
-            criterion_clf = nn.BCEWithLogitsLoss()
-            optimizer = optim.SGD([{'params': model.fc_encoder.parameters(), 'lr': learning_rate_ae},
-                                   {'params': model.classifier.parameters(), 'lr': learning_rate_clf}], momentum=0.9)
+    for fold_idx, (train_index, test_index) in enumerate(kf.split(flist, y_arr)):
+        logger.info(f"Starting fold {fold_idx + 1} of {p_fold}")
+        logger.info(f"Train indices: {train_index}, Test indices: {test_index}")  # Verify uniqueness
+        train_samples = [flist[i] for i in train_index]
+        test_samples = [flist[i] for i in test_index]
+        regions_inds = get_regs(train_samples, int(num_corr / 4))
+        num_inpp = len(regions_inds)
+        n_lat = int(num_inpp / 2)
 
-            for epoch in range(1, num_epochs + 1):
-                train_losses = train(model, epoch, train_loader, mode='both' if epoch <= 20 else 'clf')
+        train_loader = get_loader(data=all_corr, samples_list=train_samples, batch_size=batch_size, mode='train',
+                                  augmentation=p_augmentation, aug_factor=aug_factor, num_neighbs=num_neighbs,
+                                  eig_data=eig_data, similarity_fn=sim_function, regions=regions_inds)
+        test_loader = get_loader(data=all_corr, samples_list=test_samples, batch_size=batch_size, mode='test',
+                                 augmentation=False, regions=regions_inds)
 
-            res_mlp = test(model, criterion_ae, test_loader, eval_classifier=True)
-            crossval_res_kol.append(res_mlp)
+        model = MTAutoEncoder(num_inputs=num_inpp, num_latent=n_lat, tied=True, use_dropout=False).to(device)
+        criterion_ae = nn.MSELoss(reduction='sum')
+        criterion_clf = nn.BCEWithLogitsLoss()
+        optimizer = optim.SGD([{'params': model.fc_encoder.parameters(), 'lr': learning_rate_ae},
+                               {'params': model.classifier.parameters(), 'lr': learning_rate_clf}], momentum=0.9)
 
-    print("Average results:", np.mean(np.array(crossval_res_kol), axis=0))
+        for epoch in range(1, num_epochs + 1):
+            train_losses = train(model, epoch, train_loader, mode='both' if epoch <= 20 else 'clf')
+
+        res_mlp = test(model, test_loader, eval_classifier=True)
+        crossval_res_kol.append(res_mlp)
+        logger.info(f"Fold {fold_idx + 1} results: Accuracy = {res_mlp[0]}, Sensitivity = {res_mlp[1]}, Specificity = {res_mlp[2]}")
+
+    logger.info("Cross-validation completed")
+    logger.info(f"Average results: Accuracy = {np.mean(np.array(crossval_res_kol), axis=0)[0]}, Sensitivity = {np.mean(np.array(crossval_res_kol), axis=0)[1]}, Specificity = {np.mean(np.array(crossval_res_kol), axis=0)[2]}")
