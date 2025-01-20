@@ -9,6 +9,7 @@ from sklearn.impute import SimpleImputer
 from nilearn import input_data, datasets
 import os
 import random
+import joblib  # Import joblib for saving the model
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -151,6 +152,11 @@ def main():
     logging.info(f"Model Accuracy: {accuracy * 100:.2f}%")
     logging.info("Classification Report:")
     print(classification_report(y_test, y_pred))
+
+    # Save the trained model to a file
+    model_filename = 'model.sh'
+    joblib.dump(slp, model_filename)
+    logging.info(f"Model saved to {model_filename}")
 
     logging.info("Training script execution complete.")
 

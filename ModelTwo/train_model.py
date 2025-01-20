@@ -1,4 +1,3 @@
-# Import libraries
 import pandas as pd
 import numpy as np
 import numpy.ma as ma
@@ -349,3 +348,8 @@ if p_Method == "ASD-DiagNet":
 
     logger.info("Cross-validation completed")
     logger.info(f"Average results: Accuracy = {np.mean(np.array(crossval_res_kol), axis=0)[0]}, Sensitivity = {np.mean(np.array(crossval_res_kol), axis=0)[1]}, Specificity = {np.mean(np.array(crossval_res_kol), axis=0)[2]}")
+
+    # Save the final trained model
+    model_save_path = os.path.join(base_dir, 'model.pth')  # Define the path to save the model
+    torch.save(model.state_dict(), model_save_path)  # Save the model's state dictionary
+    logger.info(f"Model saved to {model_save_path}")
