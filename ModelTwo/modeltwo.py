@@ -4,6 +4,7 @@ import numpy.ma as ma
 import os
 import pickle
 import torch
+import joblib
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -12,15 +13,25 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import confusion_matrix
 import functools
 import random
-import gc  # For garbage collection
-import logging  # For logging messages
+import gc
+import logging
+from pathlib import Path
+
+# Set BASE_DIR
+BASE_DIR = Path(__file__).resolve().parent
+
+# Set paths using BASE_DIR
+MODEL_PATH = BASE_DIR / "ModelTwo/model.joblib"
+DATA_PATH = BASE_DIR / "data/ABIDE/Outputs/cpac/filt_noglobal/rois_aal"
+PHENOTYPIC_CSV = BASE_DIR / "data/Phenotypic_V1_0b.csv"
+p_ROI = "aal"  # Define p_ROI before using it
+CORRELATIONS_FILE_PATH = BASE_DIR / f"correlations_file_{p_ROI}.joblib"  # Use joblib extension
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Set parameters
-p_ROI = "aal"  # Options: aal, cc200, dosenbach160
 p_fold = 10
 p_center = "Stanford"
 p_mode = "whole"
@@ -117,21 +128,15 @@ def get_loader(data, samples_list, batch_size, mode='train', augmentation=False,
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=(mode == 'train'))
     return loader
 
-# Define paths
-base_dir = os.path.dirname(os.path.abspath(__file__))
-data_main_path = os.path.join(base_dir, 'data/ABIDE/Outputs/cpac/filt_noglobal/rois_' + p_ROI)
-phenotypic_csv_path = os.path.join(base_dir, 'data/Phenotypic_V1_0b.csv')
-correlations_file_path = os.path.join(base_dir, 'correlations_file_' + p_ROI + '.pkl')
-
 # Validate paths
-if not os.path.exists(data_main_path):
-    raise FileNotFoundError(f"Data path does not exist: {data_main_path}")
-logger.info(f"Data path exists: {data_main_path}")
-logger.info(f"Files in directory: {os.listdir(data_main_path)}")
+if not DATA_PATH.exists():
+    raise FileNotFoundError(f"Data path does not exist: {DATA_PATH}")
+logger.info(f"Data path exists: {DATA_PATH}")
+logger.info(f"Files in directory: {os.listdir(DATA_PATH)}")
 
 # Generate flist with all .1D files
 flist = []
-for root, dirs, files in os.walk(data_main_path):
+for root, dirs, files in os.walk(DATA_PATH):
     for file in files:
         if file.endswith('.1D'):
             key = get_key(file)
@@ -140,29 +145,29 @@ logger.info(f"Filtered file list (flist): {flist}")
 
 # Ensure flist is not empty
 if not flist:
-    raise FileNotFoundError(f"No valid files found in {data_main_path}. Please check the directory or ROI parameter.")
+    raise FileNotFoundError(f"No valid files found in {DATA_PATH}. Please check the directory or ROI parameter.")
 
 # Load phenotypic data
 logger.info("Loading phenotypic data")
-df_labels = pd.read_csv(phenotypic_csv_path)
+df_labels = pd.read_csv(PHENOTYPIC_CSV)
 df_labels.DX_GROUP = df_labels.DX_GROUP.map({1: 1, 2: 0})
 labels = {row[1]['FILE_ID']: row[1]['DX_GROUP'] for row in df_labels.iterrows() if row[1]['FILE_ID'] != 'no_filename'}
 
 # Load or compute correlations
-if not os.path.exists(correlations_file_path):
+if not CORRELATIONS_FILE_PATH.exists():
     logger.info("Computing correlations from scratch")
     all_corr = {}
     for f in flist:
-        filepath = os.path.join(data_main_path, f + '_rois_aal.1D')
+        filepath = DATA_PATH / f"{f}_rois_aal.1D"
         corr_data = get_corr_data(filepath)
         if corr_data is not None:  # Skip invalid data
             all_corr[f] = (corr_data, get_label(f, labels))
-    with open(correlations_file_path, 'wb') as f:
-        pickle.dump(all_corr, f)
+    joblib.dump(all_corr, CORRELATIONS_FILE_PATH)  # Save using joblib
+    logger.info(f"Correlations saved to {CORRELATIONS_FILE_PATH}")
 else:
     logger.info("Loading precomputed correlations")
-    with open(correlations_file_path, 'rb') as f:
-        all_corr = pickle.load(f)
+    all_corr = joblib.load(CORRELATIONS_FILE_PATH)  # Load using joblib
+    logger.info(f"Correlations loaded from {CORRELATIONS_FILE_PATH}")
 
 # Free up memory
 del df_labels
@@ -171,14 +176,14 @@ gc.collect()
 if p_Method == "ASD-DiagNet":
     logger.info("Starting ASD-DiagNet method")
     eig_data = {}
-    batch_size = 10  # Process 10 files at a time
+    batch_size = 10
     for i in range(0, len(flist), batch_size):
         batch_files = flist[i:i + batch_size]
         logger.info(f"Processing batch {i // batch_size + 1} of {len(flist) // batch_size + 1}")
         for f in batch_files:
-            filepath = os.path.join(data_main_path, f + '_rois_aal.1D')
+            filepath = DATA_PATH / f"{f}_rois_aal.1D"
             d = get_corr_matrix(filepath)
-            if d is not None and d.ndim == 2:  # Ensure the correlation matrix is 2D
+            if d is not None and d.ndim == 2:
                 try:
                     eig_vals, eig_vecs = np.linalg.eig(d)
                     sum_eigvals = np.sum(np.abs(eig_vals))
@@ -350,6 +355,39 @@ if p_Method == "ASD-DiagNet":
     logger.info(f"Average results: Accuracy = {np.mean(np.array(crossval_res_kol), axis=0)[0]}, Sensitivity = {np.mean(np.array(crossval_res_kol), axis=0)[1]}, Specificity = {np.mean(np.array(crossval_res_kol), axis=0)[2]}")
 
     # Save the final trained model
-    model_save_path = os.path.join(base_dir, 'model.pth')  # Define the path to save the model
-    torch.save(model.state_dict(), model_save_path)  # Save the model's state dictionary
-    logger.info(f"Model saved to {model_save_path}")
+    model_save_path = BASE_DIR / 'model.joblib'  # Use BASE_DIR to save the model
+    joblib.dump(model, MODEL_PATH)  # Save the model using joblib
+    logger.info(f"Model saved to {MODEL_PATH}")
+
+def predict(model, data_files, device, regions=None):
+    """
+    Predicts on single or multiple files using the trained model.
+
+    :param model: The trained model.
+    :param data_files: A single file or a list of files for prediction.
+    :param device: The device (CPU or GPU) on which to run the model.
+    :param regions: The regions to be used for prediction.
+    :return: Predicted results for each file.
+    """
+    model.eval()  # Set the model to evaluation mode
+    predictions = []
+
+    # If a single file is passed, convert it into a list
+    if isinstance(data_files, str):
+        data_files = [data_files]
+
+    logger.info(f"Making predictions on {len(data_files)} file(s)")
+
+    with torch.no_grad():  # Turn off gradient computation for inference
+        for filename in data_files:
+            # Process the data for the specific file
+            data = all_corr[filename][0][regions]  # Assuming all_corr is already populated
+            data_tensor = torch.FloatTensor(data).to(device)
+
+            # Make prediction using the model
+            _, logits = model(data_tensor, eval_classifier=True)
+            proba = torch.sigmoid(logits).cpu().numpy()
+            prediction = (proba >= 0.5).astype(int)  # Threshold the probabilities to 0 or 1
+            predictions.append((filename, prediction))
+
+    return predictions
