@@ -1,0 +1,2 @@
+file_path,features,prediction,confidence_asd,confidence_no_asd
+/Users/mennahtullahmabrouk/PycharmProjects/ASD/ASD-DiagNet/ModelOne/abide/ABIDE_pcp/cpac/nofilt_noglobal/Caltech_0051461_func_preproc.nii.gz,"[[-1.4955984625523193, -0.894283095967217, -3.598921817195067, -1.1962596504861973, -0.16468459139916092]]",0,0.44734714515602914,0.5526528548439709
